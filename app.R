@@ -8,6 +8,8 @@ library(DT)
 library(stringr)
 library(tools)
 library(maps) 
+library(maptools)
+library(rgeos)
 
 # Load and clean data
 
@@ -16,9 +18,8 @@ protests <- as.data.frame(protests)
 protests$Mnth_Yr <- as.factor(format(as.Date(protests$fixeddate), "%B %Y"))
 protests$Mnth_Yr <- factor(protests$Mnth_Yr, c("January 2020", "February 2020", "March 2020", "April 2020", "May 2020", "June 2020", "July 2020", "August 2020", "September 2020", "October 2020", "November 2020", "December 2020", "January 2021", "February 2021"))
 
-mainstates <- map_data("state")
-
-protestsmainstates <- filter(protests, admin1 != "Alaska", admin1 != "Hawaii")
+states <- readShapePoly("tl_2020_us_state")
+states@data <- cbind(states@data, rgeos::gCentroid(states, byid = TRUE)@coords)
 
 # Create dashboard header, sidebar, and main body
 
@@ -40,8 +41,7 @@ sidebar <- dashboardSidebar(
         selectInput(input = "state",
                     label = "Choose which states to show:",
                     choices = unique(protests$admin1),
-                    selected = "Pennsylvania",
-                    multiple = T),
+                    selected = "Pennsylvania"),
         
         dateRangeInput(input = "daterange",
                        label = "Choose the time frame you'd like to view data for:",
@@ -62,23 +62,16 @@ body <- dashboardBody(tabItems(
             ),
             
             fluidRow(
-                valueBoxOutput("totnumevents"),
-                valueBoxOutput("numstates"),
-                valueBoxOutput("numactors")
+                tabBox(title = "Map",
+                       width = 12,
+                       tabPanel("Map of Selected Events", leafletOutput("mapPlot")))
             ),
             
             fluidRow(
                 tabBox(title = "Plots",
                        width = 12,
                        tabPanel("Distribution over Time", plotlyOutput("distPlot")),
-                       tabPanel("Distribution by State", plotlyOutput("statePlot")),
                        tabPanel("Distribution by Main Actors", plotlyOutput("actorPlot")))
-            ),
-            
-            fluidRow(
-                tabBox(title = "Map",
-                       width = 12,
-                       tabPanel("Map of Selected Events", leafletOutput("mapPlot")))
             )
     ),
     
@@ -94,19 +87,11 @@ ui <- dashboardPage(header, sidebar, body)
 
 server <- function(input, output) {
     
-    # Data cleaning steps 
-    
     #create subset of dataset based on all user input
     protestssubset <- reactive({
         protestssubset <- protests %>%
-            filter(event_type %in% input$eventtype, admin1 %in% input$state, as.Date(fixeddate) >= input$daterange[1], as.Date(fixeddate) <= input$daterange[2])
+            filter(event_type %in% input$eventtype, admin1 == input$state, as.Date(fixeddate) >= input$daterange[1], as.Date(fixeddate) <= input$daterange[2])
         protestssubset
-    })
-    
-    protestsmainstatessubset <- reactive({
-        protestsmainstates <- protestsmainstates %>%
-            filter(event_type %in% input$eventtype, admin1 %in% input$state, as.Date(fixeddate) >= input$daterange[1], as.Date(fixeddate) <= input$daterange[2])
-        protestsmainstates
     })
     
     #create summary table grouped by state and event type
@@ -133,23 +118,6 @@ server <- function(input, output) {
         byactor
     })
     
-    # Creating value boxes
-    
-    output$totnumevents <- renderValueBox({
-        num <- nrow(protestssubset())
-        valueBox(subtitle = "Total number of Events", value = num, icon = icon("sort-numeric-asc"), color = "green")
-    })
-    
-    output$numstates <- renderValueBox({
-        num <- length(input$state)
-        valueBox(subtitle = "Total number of States", value = num, icon("sort-numeric-asc"), color = "blue")
-    })
-    
-    output$numactors <- renderValueBox({
-        num <- length(unique(byactor()$actor1))
-        valueBox(subtitle = "Total number of Actors", value = num, icon("sort-numeric-asc"), color = "red")
-    })
-    
     #Creating Info box
     
     output$datasrc <- renderInfoBox({
@@ -166,13 +134,6 @@ server <- function(input, output) {
                      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)))
     })
     
-    #bar chart showing number of events for each state, colored by events
-    output$statePlot <- renderPlotly({
-        ggplotly(ggplot(data = bystate(), aes(x=count, y=admin1)) + 
-                     geom_bar(aes(fill = event_type), stat = 'identity') +
-                     scale_fill_brewer(palette="Set2"))
-    })
-    
     #bar chart showing subtype by event type 
     output$actorPlot <- renderPlotly({
         ggplotly(ggplot(data=byactor(), aes(x=actor1, y=count)) +
@@ -185,8 +146,22 @@ server <- function(input, output) {
         leaflet() %>%
             addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", attribution = "Google", group = "Google") %>%
             addProviderTiles(provider = providers$Wikimedia, group = "Wiki") %>%
-            setView(-79.931355, 40.449504, 9) %>%
+            setView(-77.194527, 41.203323, zoom = 6) %>%
             addLayersControl(baseGroups = c("Google", "Wiki"))
+    })
+    
+    statesubset <- reactive({
+        statesubset <- subset(states, states$NAME == input$state)
+        statesubset
+    })
+    
+    observe({
+        statessub <- statesubset()
+        
+        leafletProxy("mapPlot", data = statessub) %>%
+            clearGroup(group = "statessub") %>%
+            addPolygons(popup = ~paste0("<b>", NAME, "</b>"), group = "statessub", layerId = ~GEOID, fill = TRUE, color = "white") %>%
+            setView(lng = statessub$x[1], lat = statessub$y[1], zoom = 6)
     })
     
     #output datatable based on subset of data
