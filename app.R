@@ -10,6 +10,7 @@ library(tools)
 library(maps) 
 library(maptools)
 library(rgeos)
+library(leaflet)
 
 # Load and clean data
 
