@@ -78,7 +78,7 @@ body <- dashboardBody(tabItems(
             fluidRow(
                 tabBox(title = "Map",
                        width = 12,
-                       tabPanel("Map of Selected Events", plotlyOutput("mapPlot")))
+                       tabPanel("Map of Selected Events", leafletOutput("mapPlot")))
             )
     ),
     
@@ -181,11 +181,12 @@ server <- function(input, output) {
                      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)))
     })
     
-    output$mapPlot <- renderPlotly({
-        ggplotly(ggplot() + 
-                     geom_polygon(data=mainstates, aes(x=long, y=lat, group=group), color = "white", fill = "grey") + 
-                     geom_point(data=protestsmainstates, aes(x=longitude, y=latitude), color = "black", alpha = .25) + 
-                     geom_point(data=protestsmainstatessubset(), aes(x=longitude, y=latitude, color = event_type)))
+    output$mapPlot <- renderLeaflet({
+        leaflet() %>%
+            addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", attribution = "Google", group = "Google") %>%
+            addProviderTiles(provider = providers$Wikimedia, group = "Wiki") %>%
+            setView(-79.931355, 40.449504, 9) %>%
+            addLayersControl(baseGroups = c("Google", "Wiki"))
     })
     
     #output datatable based on subset of data
