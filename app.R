@@ -18,6 +18,7 @@ protests <- as.data.frame(protests)
 protests$Mnth_Yr <- as.factor(format(as.Date(protests$fixeddate), "%B %Y"))
 protests$Mnth_Yr <- factor(protests$Mnth_Yr, c("January 2020", "February 2020", "March 2020", "April 2020", "May 2020", "June 2020", "July 2020", "August 2020", "September 2020", "October 2020", "November 2020", "December 2020", "January 2021", "February 2021"))
 
+#load in states shapefile and create centroids
 states <- readShapePoly("tl_2020_us_state")
 states@data <- cbind(states@data, rgeos::gCentroid(states, byid = TRUE)@coords)
 
@@ -48,7 +49,9 @@ sidebar <- dashboardSidebar(
                        start = min(protests$fixeddate),
                        end = max(protests$fixeddate),
                        min = min(protests$fixeddate),
-                       max = max(protests$fixeddate))
+                       max = max(protests$fixeddate)),
+        
+        downloadButton("download", "Download selected data")
     )
 )
 
@@ -94,14 +97,6 @@ server <- function(input, output) {
         protestssubset
     })
     
-    #create summary table grouped by state and event type
-    bystate <-reactive({
-        bystate <- protestssubset() %>%
-            group_by(admin1, event_type) %>%
-            summarise(count=n(), percent_of_total = (n()/nrow(protestssubset()))*100, deaths = sum(fatalities))
-        bystate
-    })
-    
     #grouped by month/year and event type
     bydate <- reactive({
         bydate <- protestssubset() %>%
@@ -142,6 +137,7 @@ server <- function(input, output) {
                      theme(axis.text.x = element_text(angle=45, vjust=1, hjust=1)))
     })
     
+    #base leaflet map, centered on pa's centroid 
     output$mapPlot <- renderLeaflet({
         leaflet() %>%
             addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", attribution = "Google", group = "Google") %>%
@@ -150,11 +146,13 @@ server <- function(input, output) {
             addLayersControl(baseGroups = c("Google", "Wiki"))
     })
     
+    #subsetting state shapefile to plot 
     statesubset <- reactive({
         statesubset <- subset(states, states$NAME == input$state)
         statesubset
     })
     
+    #observe function for changes in user input and add polygon
     observe({
         statessub <- statesubset()
         
@@ -164,9 +162,33 @@ server <- function(input, output) {
             setView(lng = statessub$x[1], lat = statessub$y[1], zoom = 6)
     })
     
+    #observe function for changes in user input to add markers for protests 
+    observe({
+        protestssub <- protestssubset()
+        
+        pal <- colorFactor(palette="Set2", domain = unique(protests$event_type))
+        
+        leafletProxy("mapPlot", data = protestssub) %>%
+            # In this case either lines 92 or 93 will work
+            # clearMarkers() %>%
+            clearGroup(group = "protestssub") %>%
+            addCircleMarkers(popup = ~paste0("<b>", event_type, "</b></br> Actors: ", actor1, ", ", assoc_actor_1, "</br> Description: ", notes), 
+                             group = "protestssub", layerId = ~data_id, color = ~pal(event_type), radius = 2)
+    })
+    
     #output datatable based on subset of data
     output$table <- DT::renderDataTable(
         DT::datatable(data = protestssubset())
+    )
+    
+    #download handler 
+    output$download <- downloadHandler(
+        filename = function() {
+            paste("protestsdata", ".csv", sep = "")
+        },
+        content = function(file) {
+            write.csv(protestssubset(), file, row.names = FALSE)
+        }
     )
     
 }
